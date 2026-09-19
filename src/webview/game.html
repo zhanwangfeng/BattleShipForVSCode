@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>海战棋 你 vs 机器人</title>
+<style>
+  :root{
+    --bg:#0f172a; --panel:#1e293b; --line:#334155; --text:#e2e8f0;
+    --accent:#38bdf8; --head:#ef4444; --body:#22c55e; --miss:#64748b;
+    --plane:#475569; --water:#1e293b;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+    background:radial-gradient(1200px 600px at 50% -10%,#1e3a5f,var(--bg));
+    color:var(--text); min-height:100vh; padding:24px 16px;
+  }
+  h1{text-align:center;font-size:24px;letter-spacing:2px;margin-bottom:4px;}
+  .sub{text-align:center;color:#94a3b8;font-size:13px;margin-bottom:18px;}
+  .wrap{max-width:980px;margin:0 auto;}
+  .status{
+    text-align:center;background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;padding:10px 14px;margin-bottom:18px;font-size:15px;min-height:42px;
+    display:flex;align-items:center;justify-content:center;gap:8px;
+  }
+  .status b{color:var(--accent);}
+  .boards{display:flex;gap:24px;justify-content:center;flex-wrap:wrap;}
+  .board-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;}
+  .board-card h2{font-size:15px;text-align:center;margin-bottom:10px;font-weight:600;}
+  /* 格子铺满整格(无逻辑间隙)，视觉间隙由内部 tile 的 inset 实现 */
+  .board{display:grid;grid-template-columns:repeat(10,32px);grid-template-rows:repeat(10,32px);
+    gap:0;background:#0b1426;padding:2px;border-radius:10px;}
+  .cell{
+    width:32px;height:32px;cursor:pointer;position:relative;
+  }
+  .cell .tile{position:absolute;inset:1px;border-radius:4px;background:var(--water);
+    border:1px solid #2a3a52;transition:background .1s;}
+  .cell:hover{outline:2px solid var(--accent);outline-offset:-2px;z-index:2;}
+  .cell.ship .tile{background:var(--body);}     /* 我方战舰恒为绿色 */
+  .cell.miss .tile{background:var(--miss);}
+  .cell.body .tile{background:var(--body);}      /* 击中（绿色） */
+  .cell.sunk .tile{background:var(--head);}      /* 击沉（红色） */
+  .cell.reveal .tile{background:#3b4a63;}
+  /* 击中 / 击沉：在颜色上叠加叉叉（用 line 绘制） */
+  .cell.body .tile, .cell.sunk .tile{overflow:hidden;}
+  .cell.body .tile::before, .cell.body .tile::after,
+  .cell.sunk .tile::before, .cell.sunk .tile::after{
+    content:""; position:absolute; left:50%; top:50%;
+    width:78%; height:3px; border-radius:2px; background:#ffffff;
+    transform-origin:center;
+  }
+  .cell.body .tile::before, .cell.sunk .tile::before{ transform:translate(-50%,-50%) rotate(45deg); }
+  .cell.body .tile::after,  .cell.sunk .tile::after{ transform:translate(-50%,-50%) rotate(-45deg); }
+  /* 击沉叉叉用醒目黄色加粗 */
+  .cell.sunk .tile::before, .cell.sunk .tile::after{
+    background:#fde047; height:4px; box-shadow:0 0 3px rgba(0,0,0,.45);
+  }
+  /* 最后一次轰炸的格子：高亮边框 */
+  .cell.last-shot{ z-index:3; }
+  .cell.last-shot .tile{ border:2px solid #fbbf24; box-shadow:0 0 6px 1px rgba(251,191,36,.7); }
+  .cell .dot{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    font-size:13px;font-weight:700;color:#fff;pointer-events:none;z-index:1;}
+  .cell.ghost-ok{outline:2px dashed var(--accent);outline-offset:-2px;z-index:2;}
+  .cell.ghost-bad{outline:2px dashed #f87171;outline-offset:-2px;z-index:2;}
+  /* 音效开关（固定右上角） */
+  .sound-toggle{position:fixed;top:16px;right:16px;z-index:50;background:var(--panel);
+    color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 12px;font-size:18px;
+    line-height:1;box-shadow:0 2px 8px rgba(0,0,0,.3);}
+  .controls{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin:18px 0;}
+  button{
+    background:var(--accent);color:#08233a;border:none;padding:10px 16px;border-radius:9px;
+    font-size:14px;font-weight:600;cursor:pointer;transition:filter .15s,transform .05s;
+  }
+  button:hover{filter:brightness(1.1);}
+  button:active{transform:translateY(1px);}
+  button.ghost{background:transparent;color:var(--accent);border:1px solid var(--accent);}
+  button:disabled{opacity:.4;cursor:not-allowed;}
+  .legend{display:flex;gap:16px;justify-content:center;flex-wrap:wrap;font-size:12px;color:#94a3b8;margin-top:14px;}
+  .legend span{display:inline-flex;align-items:center;gap:6px;}
+  .swatch{width:14px;height:14px;border-radius:3px;display:inline-block;position:relative;}
+  /* 图例中「击中 / 击沉」图标的叉叉（与格子一致） */
+  .swatch.cross::before, .swatch.cross::after{
+    content:""; position:absolute; left:50%; top:50%;
+    width:82%; height:2px; border-radius:1px; background:#fff; transform-origin:center;
+  }
+  .swatch.cross::before{ transform:translate(-50%,-50%) rotate(45deg); }
+  .swatch.cross::after{ transform:translate(-50%,-50%) rotate(-45deg); }
+  .swatch.cross.yellow::before, .swatch.cross.yellow::after{ background:#fde047; }
+  .hint{text-align:center;color:#94a3b8;font-size:13px;margin-top:10px;}
+  .win{font-size:20px;font-weight:700;}
+  .win.win-yes{color:var(--body);}
+  .win.win-no{color:var(--head);}
+  </style>
+</head>
+<body>
+<button id="btnSound" class="sound-toggle" title="音效开关">🔊</button>
+<div class="wrap">
+  <h1>⚓ 海战棋</h1>
+  <div class="sub">规则：10×10 棋盘 · 摆放 5 艘战舰（长度 5/4/3/3/2）· 不可相邻 · 击沉全部敌舰即获胜</div>
+
+  <div class="status" id="status">阶段：布局 — 把 5 艘战舰放到左侧战场</div>
+
+  <div class="boards">
+    <div class="board-card">
+      <h2 id="leftTitle">我方战场</h2>
+      <div class="board" id="playerBoard"></div>
+    </div>
+    <div class="board-card" id="enemyCard">
+      <h2 id="rightTitle">敌方战场（未知）</h2>
+      <div class="board" id="enemyBoard"></div>
+    </div>
+  </div>
+
+  <div class="controls" id="setupControls">
+    <button id="btnRotate">🔄 旋转战舰 (R)</button>
+    <button id="btnRandom">🎲 随机排列</button>
+    <button id="btnClear">🧹 清空</button>
+    <button id="btnConfirm">✅ 确认布局，开战</button>
+  </div>
+  <div class="controls" id="battleControls" style="display:none;">
+    <button class="ghost" id="btnRestart">🔁 重新开始</button>
+  </div>
+
+  <div class="legend">
+    <span><i class="swatch" style="background:var(--body)"></i>我方战舰</span>
+    <span><i class="swatch" style="background:var(--miss)"></i>未击中</span>
+    <span><i class="swatch cross" style="background:var(--body)"></i>击中</span>
+    <span><i class="swatch cross yellow" style="background:var(--head)"></i>击沉</span>
+  </div>
+  <div class="hint" id="hint">布局提示：点击格子放置当前战舰的「首格」，方向可旋转，战舰不可相邻或重叠。</div>
+</div>
+
+<script>
+"use strict";
+const SIZE = 10;
+const SHIP_LENGTHS = [5,4,3,3,2];   // 经典舰队：航母/战列舰/巡洋舰/潜艇/驱逐舰
+const NUM_SHIPS = SHIP_LENGTHS.length;
+
+// 以首格 (headR,headC) 为基准，rot 决定朝向：0=向右 1=向下 2=向左 3=向上
+function shipCells(headR, headC, rot, len){
+  const out=[];
+  for(let k=0;k<len;k++){
+    let r=headR, c=headC;
+    if(rot===0)      c=headC+k;
+    else if(rot===1) r=headR+k;
+    else if(rot===2) c=headC-k;
+    else             r=headR-k;
+    out.push([r,c]);
+  }
+  return out;
+}
+
+// ---- 状态 ----
+let phase = "setup";            // setup | battle | over
+let rotation = 0;               // 0..3
+let placingIndex = 0;           // 当前正在放置第几艘(0..4)
+let playerShips = [];           // [{cells:[[r,c]...], sunk:false}]
+let enemyShips = [];
+
+// 我方棋盘：每格记录所属战舰下标（null=空海）；playerShotByAI 记录电脑命中的结果
+let playerGrid = [];   // playerGrid[r][c] = shipIndex | null
+let playerShotByAI = []; // 'none'|'miss'|'body'|'sunk'
+// 敌方棋盘：真实布局(隐藏)，enemyShotByPlayer 记录玩家射击结果
+let enemyGrid = [];
+let enemyShotByPlayer = [];
+
+// 电脑 AI
+let aiTargets = [];
+let lastPlayerShot = null;
+let lastAIShot = null;
+
+// ---- 音效（Web Audio，无需外部文件） ----
+let audioCtx = null;
+let soundOn = true;
+function ensureAudio(){
+  if(!audioCtx){
+    try{ audioCtx = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ audioCtx=null; }
+  }
+  if(audioCtx && audioCtx.state==="suspended") audioCtx.resume();
+}
+function beep(freq, dur, type="sine", vol=0.16){
+  if(!soundOn || !audioCtx) return;
+  const t=audioCtx.currentTime;
+  const osc=audioCtx.createOscillator();
+  const g=audioCtx.createGain();
+  osc.type=type;
+  osc.frequency.setValueAtTime(freq, t);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(vol, t+0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+  osc.connect(g).connect(audioCtx.destination);
+  osc.start(t); osc.stop(t+dur+0.02);
+}
+function sweep(f1,f2,dur,type="sawtooth",vol=0.2){
+  if(!soundOn || !audioCtx) return;
+  const t=audioCtx.currentTime;
+  const osc=audioCtx.createOscillator();
+  const g=audioCtx.createGain();
+  osc.type=type;
+  osc.frequency.setValueAtTime(f1,t);
+  osc.frequency.exponentialRampToValueAtTime(f2,t+dur);
+  g.gain.setValueAtTime(0.0001,t);
+  g.gain.linearRampToValueAtTime(vol,t+0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+  osc.connect(g).connect(audioCtx.destination);
+  osc.start(t); osc.stop(t+dur+0.02);
+}
+function explosion(vol=0.34, dur=0.38){
+  if(!soundOn || !audioCtx) return;
+  const t=audioCtx.currentTime;
+  const bufSize=Math.floor(audioCtx.sampleRate*dur);
+  const buf=audioCtx.createBuffer(1,bufSize,audioCtx.sampleRate);
+  const data=buf.getChannelData(0);
+  for(let i=0;i<bufSize;i++) data[i]=Math.random()*2-1;
+  const noise=audioCtx.createBufferSource(); noise.buffer=buf;
+  const filter=audioCtx.createBiquadFilter(); filter.type="lowpass";
+  filter.frequency.setValueAtTime(1800,t);
+  filter.frequency.exponentialRampToValueAtTime(180,t+dur);
+  const ng=audioCtx.createGain();
+  ng.gain.setValueAtTime(vol,t);
+  ng.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+  noise.connect(filter).connect(ng).connect(audioCtx.destination);
+  noise.start(t); noise.stop(t+dur);
+  const osc=audioCtx.createOscillator(); osc.type="sine";
+  osc.frequency.setValueAtTime(120,t);
+  osc.frequency.exponentialRampToValueAtTime(38,t+dur*0.85);
+  const og=audioCtx.createGain();
+  og.gain.setValueAtTime(vol*0.9,t);
+  og.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+  osc.connect(og).connect(audioCtx.destination);
+  osc.start(t); osc.stop(t+dur+0.02);
+}
+const sfx = {
+  place: ()=>beep(440,0.08,"triangle",0.12),
+  rotate:()=>beep(330,0.06,"square",0.07),
+  random:()=>{ beep(523,0.07,"triangle",0.1); setTimeout(()=>beep(659,0.07,"triangle",0.1),70); },
+  clear: ()=>beep(200,0.12,"sine",0.1),
+  miss:  ()=>beep(150,0.18,"sine",0.18),
+  body:  ()=>explosion(),
+  head:  ()=>{ // 击沉：爆炸底噪 + 上行琶音
+    explosion(0.36,0.45);
+    [523,659,784,1046].forEach((f,i)=>setTimeout(()=>beep(f,0.16,"square",0.14), i*70));
+  },
+  win:   ()=>{ [523,659,784,1046].forEach((f,i)=>setTimeout(()=>beep(f,0.18,"triangle",0.18),i*120)); },
+  lose:  ()=>{ [440,330,247,165].forEach((f,i)=>setTimeout(()=>beep(f,0.22,"sawtooth",0.16),i*140)); },
+  start: ()=>{
+    const notes=[392,523,659,784,1046];
+    notes.forEach((f,i)=>setTimeout(()=>beep(f, i===notes.length-1?0.32:0.14, "triangle",0.18), i*95));
+  },
+};
+
+function emptyGrid(){ return Array.from({length:SIZE},()=>Array(SIZE).fill(null)); }
+function emptyStrGrid(){ return Array.from({length:SIZE},()=>Array(SIZE).fill("none")); }
+
+function init(){
+  phase="setup"; rotation=0; placingIndex=0;
+  playerShips=[]; enemyShips=[];
+  playerGrid=emptyGrid(); playerShotByAI=emptyStrGrid();
+  enemyGrid=emptyGrid(); enemyShotByPlayer=emptyStrGrid();
+  aiTargets=[];
+  lastPlayerShot=null; lastAIShot=null;
+  document.getElementById("setupControls").style.display="flex";
+  document.getElementById("battleControls").style.display="none";
+  document.getElementById("enemyCard").style.display="none";
+  document.getElementById("leftTitle").textContent="我方战场";
+  document.getElementById("rightTitle").textContent="敌方战场（未知）";
+  setStatus('阶段：布局 — 把 5 艘战舰放到左侧战场（已放 '+playerShips.length+'/'+NUM_SHIPS+'）');
+  document.getElementById("hint").textContent="布局提示：点击格子放置当前战舰的「首格」，方向可旋转，战舰不可相邻或重叠。";
+  buildBoards();
+  renderAll();
+}
+
+function setStatus(t){ document.getElementById("status").innerHTML=t; }
+
+// ---- 构建 DOM ----
+function buildBoards(){
+  const pb=document.getElementById("playerBoard");
+  const eb=document.getElementById("enemyBoard");
+  pb.innerHTML=""; eb.innerHTML="";
+  for(let r=0;r<SIZE;r++){
+    for(let c=0;c<SIZE;c++){
+      const pc=document.createElement("div");
+      pc.className="cell"; pc.dataset.r=r; pc.dataset.c=c;
+      pc.addEventListener("click",()=>onPlayerCellClick(r,c));
+      pc.addEventListener("mouseenter",()=>onPlayerCellHover(r,c,true));
+      pc.addEventListener("mouseleave",()=>onPlayerCellHover(r,c,false));
+      pb.appendChild(pc);
+
+      const ec=document.createElement("div");
+      ec.className="cell"; ec.dataset.r=r; ec.dataset.c=c;
+      ec.addEventListener("click",()=>onEnemyCellClick(r,c));
+      eb.appendChild(ec);
+    }
+  }
+}
+
+function inBounds(r,c){ return r>=0&&r<SIZE&&c>=0&&c<SIZE; }
+
+// 校验战舰能否放在该首格位置（不越界、不重叠、八方向不相邻）
+function canPlace(headR,headC,rot,len,ignoreIndex=-1){
+  const cells=shipCells(headR,headC,rot,len);
+  for(const [r,c] of cells){
+    if(!inBounds(r,c)) return false;
+    const occ=playerGrid[r][c];
+    if(occ!==null && occ!==ignoreIndex) return false;
+  }
+  for(const [r,c] of cells){
+    for(let dr=-1;dr<=1;dr++)for(let dc=-1;dc<=1;dc++){
+      if(dr===0&&dc===0) continue;
+      const nr=r+dr, nc=c+dc;
+      if(inBounds(nr,nc)){
+        const occ=playerGrid[nr][nc];
+        if(occ!==null && occ!==ignoreIndex) return false;
+      }
+    }
+  }
+  return true;
+}
+
+let hoverR=-1, hoverC=-1;
+
+function clearGhost(){
+  document.querySelectorAll("#playerBoard .cell.ghost-ok, #playerBoard .cell.ghost-bad")
+    .forEach(el=>el.classList.remove("ghost-ok","ghost-bad"));
+}
+
+function paintGhost(r,c){
+  clearGhost();
+  if(phase!=="setup"||placingIndex>=NUM_SHIPS||r<0||c<0) return;
+  const len=SHIP_LENGTHS[placingIndex];
+  const cells=shipCells(r,c,rotation,len);
+  const ok=canPlace(r,c,rotation,len);
+  for(const [rr,cc] of cells){
+    if(!inBounds(rr,cc)) continue;
+    cellEl("playerBoard",rr,cc).classList.add(ok?"ghost-ok":"ghost-bad");
+  }
+}
+
+function onPlayerCellHover(r,c,on){
+  hoverR = on ? r : -1;
+  hoverC = on ? c : -1;
+  paintGhost(hoverR,hoverC);
+}
+
+function onPlayerCellClick(r,c){
+  if(phase!=="setup"||placingIndex>=NUM_SHIPS) return;
+  ensureAudio();
+  const len=SHIP_LENGTHS[placingIndex];
+  if(!canPlace(r,c,rotation,len)){
+    setStatus('⚠️ 该位置无法放置（越界、重叠或相邻），请换位置或旋转方向。');
+    sfx.clear();
+    return;
+  }
+  sfx.place();
+  const cells=shipCells(r,c,rotation,len);
+  const idx=placingIndex;
+  cells.forEach(([rr,cc])=>{ playerGrid[rr][cc]=idx; });
+  playerShips.push({cells, sunk:false});
+  placingIndex++;
+  if(placingIndex<NUM_SHIPS){
+    setStatus('阶段：布局 — 已放 '+placingIndex+'/'+NUM_SHIPS+' 艘（下一艘长度 '+SHIP_LENGTHS[placingIndex]+'）。');
+  }else{
+    setStatus('✅ '+NUM_SHIPS+' 艘战舰已放好！可微调或点击「确认布局，开战」。');
+  }
+  renderAll();
+}
+
+function onEnemyCellClick(r,c){
+  if(phase!=="battle") return;
+  if(enemyShotByPlayer[r][c]!=="none") return;
+  ensureAudio();
+  resolvePlayerShot(r,c);
+  const res=enemyShotByPlayer[r][c];
+  if(res==="miss") sfx.miss(); else if(res==="body") sfx.body(); else if(res==="sunk") sfx.head();
+  lastPlayerShot={r,c};
+  renderAll();
+  if(checkWin()) return;
+  setTimeout(()=>{
+    computerMove();
+    renderAll();
+    checkWin();
+  },350);
+}
+
+// 解析玩家射击；若整艘敌舰被击中则全部标记为「击沉」
+function resolvePlayerShot(r,c){
+  const g=enemyGrid[r][c];
+  if(g===null){ enemyShotByPlayer[r][c]="miss"; return; }
+  enemyShotByPlayer[r][c]="body";
+  const ship=enemyShips[g];
+  if(ship.cells.every(([rr,cc])=> enemyShotByPlayer[rr][cc]==="body" || enemyShotByPlayer[rr][cc]==="sunk")){
+    ship.cells.forEach(([rr,cc])=> enemyShotByPlayer[rr][cc]="sunk");
+    ship.sunk=true;
+  }
+}
+
+// ---- 电脑 AI ----
+function computerPlaceShips(){
+  enemyShips=[]; enemyGrid=emptyGrid();
+  let idx=0;
+  while(idx<NUM_SHIPS){
+    const len=SHIP_LENGTHS[idx];
+    const rot=Math.floor(Math.random()*4);
+    const hr=Math.floor(Math.random()*SIZE);
+    const hc=Math.floor(Math.random()*SIZE);
+    if(canPlaceEnemy(hr,hc,rot,len)){
+      const cells=shipCells(hr,hc,rot,len);
+      cells.forEach(([r,c])=>{ enemyGrid[r][c]=idx; });
+      enemyShips.push({cells, sunk:false});
+      idx++;
+    }
+  }
+}
+function canPlaceEnemy(hr,hc,rot,len,ignoreIndex=-1){
+  const cells=shipCells(hr,hc,rot,len);
+  for(const [r,c] of cells){
+    if(!inBounds(r,c)) return false;
+    const occ=enemyGrid[r][c];
+    if(occ!==null && occ!==ignoreIndex) return false;
+  }
+  for(const [r,c] of cells){
+    for(let dr=-1;dr<=1;dr++)for(let dc=-1;dc<=1;dc++){
+      if(dr===0&&dc===0) continue;
+      const nr=r+dr, nc=c+dc;
+      if(inBounds(nr,nc)){
+        const occ=enemyGrid[nr][nc];
+        if(occ!==null && occ!==ignoreIndex) return false;
+      }
+    }
+  }
+  return true;
+}
+
+function computerMove(){
+  let cell=null;
+  while(aiTargets.length){
+    const [r,c]=aiTargets.shift();
+    if(inBounds(r,c)&&playerShotByAI[r][c]==="none"){ cell=[r,c]; break; }
+  }
+  if(!cell){
+    const options=[];
+    for(let r=0;r<SIZE;r++)for(let c=0;c<SIZE;c++)
+      if(playerShotByAI[r][c]==="none") options.push([r,c]);
+    if(!options.length) return;
+    cell=options[Math.floor(Math.random()*options.length)];
+  }
+  const [r,c]=cell;
+  const g=playerGrid[r][c];
+  if(g===null){
+    playerShotByAI[r][c]="miss";
+  }else{
+    playerShotByAI[r][c]="body";
+    const ship=playerShips[g];
+    if(ship.cells.every(([rr,cc])=> playerShotByAI[rr][cc]==="body" || playerShotByAI[rr][cc]==="sunk")){
+      ship.cells.forEach(([rr,cc])=> playerShotByAI[rr][cc]="sunk");
+      ship.sunk=true;
+      // 整艘被击沉：清掉该舰相关的候选目标
+      aiTargets=aiTargets.filter(([tr,tc])=>{
+        const tg=playerGrid[tr][tc];
+        return !(tg!==null && tg===g);
+      });
+    }else{
+      [[r-1,c],[r+1,c],[r,c-1],[r,c+1]].forEach(([nr,nc])=>{
+        if(inBounds(nr,nc)&&playerShotByAI[nr][nc]==="none") aiTargets.push([nr,nc]);
+      });
+    }
+  }
+  const res=playerShotByAI[r][c];
+  if(res==="miss") sfx.miss(); else if(res==="body") sfx.body(); else if(res==="sunk") sfx.head();
+  lastAIShot={r,c};
+}
+
+// ---- 胜负 ----
+function checkWin(){
+  const enemyAllSunk=enemyShips.length>0 && enemyShips.every(s=>s.sunk);
+  const myAllSunk=playerShips.length>0 && playerShips.every(s=>s.sunk);
+  if(enemyAllSunk){
+    phase="over";
+    setStatus('<span class="win win-yes">🎉 你赢了！已击沉全部敌舰。</span>');
+    sfx.win();
+    revealEnemy();
+    return true;
+  }
+  if(myAllSunk){
+    phase="over";
+    setStatus('<span class="win win-no">💥 你输了！我方舰队全军覆没。</span>');
+    sfx.lose();
+    revealEnemy();
+    return true;
+  }
+  return false;
+}
+
+function revealEnemy(){
+  for(let r=0;r<SIZE;r++)for(let c=0;c<SIZE;c++){
+    if(enemyGrid[r][c]!==null && enemyShotByPlayer[r][c]==="none"){
+      enemyShotByPlayer[r][c]="reveal";
+    }
+  }
+  document.getElementById("rightTitle").textContent="敌方战场（已揭晓）";
+  renderAll();
+}
+
+// ---- 渲染 ----
+function cellEl(boardId,r,c){
+  return document.querySelector(`#${boardId} .cell[data-r="${r}"][data-c="${c}"]`);
+}
+function setCell(el, cls){
+  el.className="cell"+(cls?" "+cls:"");
+  el.innerHTML='<div class="tile"></div>';
+}
+
+function renderAll(){
+  // 我方棋盘
+  for(let r=0;r<SIZE;r++)for(let c=0;c<SIZE;c++){
+    const el=cellEl("playerBoard",r,c);
+    const g=playerGrid[r][c];
+    const shot=playerShotByAI[r][c];
+    if(shot!=="none"){
+      if(shot==="miss") setCell(el,"miss");
+      else if(shot==="body") setCell(el,"body");
+      else setCell(el,"sunk");
+    }else if(g!==null){
+      setCell(el,"ship");
+    }else{
+      setCell(el,null);
+    }
+    if(lastAIShot && lastAIShot.r===r && lastAIShot.c===c && shot!=="none") el.classList.add("last-shot");
+  }
+  // 敌方棋盘（战争迷雾）
+  for(let r=0;r<SIZE;r++)for(let c=0;c<SIZE;c++){
+    const el=cellEl("enemyBoard",r,c);
+    const s=enemyShotByPlayer[r][c];
+    if(s==="miss") setCell(el,"miss");
+    else if(s==="body") setCell(el,"body");
+    else if(s==="sunk") setCell(el,"sunk");
+    else if(s==="reveal") setCell(el,"ship");
+    else setCell(el,null);
+    if(lastPlayerShot && lastPlayerShot.r===r && lastPlayerShot.c===c && s!=="none") el.classList.add("last-shot");
+  }
+  // 更新信息
+  if(phase==="battle"||phase==="over"){
+    const eLeft=enemyShips.filter(s=>!s.sunk).length;
+    const mLeft=playerShips.filter(s=>!s.sunk).length;
+    if(phase!=="over")
+      setStatus(`战斗阶段 — 剩余敌舰：<b>${eLeft}</b> · 我方剩余：<b>${mLeft}</b> · 点击右侧棋盘投弹`);
+  }
+  // 布局阶段：根据当前悬停格重绘放置预览
+  paintGhost(hoverR,hoverC);
+}
+
+// ---- 控制按钮 ----
+document.getElementById("btnRotate").addEventListener("click",()=>{
+  ensureAudio(); sfx.rotate();
+  rotation=(rotation+1)%4; renderAll();
+});
+document.getElementById("btnRandom").addEventListener("click",()=>{
+  ensureAudio(); sfx.random();
+  playerGrid=emptyGrid(); playerShips=[]; placingIndex=0; rotation=0;
+  let idx=0, guard=0;
+  while(idx<NUM_SHIPS && guard<20000){
+    guard++;
+    const len=SHIP_LENGTHS[idx];
+    const rot=Math.floor(Math.random()*4);
+    const hr=Math.floor(Math.random()*SIZE);
+    const hc=Math.floor(Math.random()*SIZE);
+    if(canPlace(hr,hc,rot,len)){
+      const cells=shipCells(hr,hc,rot,len);
+      cells.forEach(([r,c])=>{ playerGrid[r][c]=idx; });
+      playerShips.push({cells, sunk:false});
+      idx++;
+    }
+  }
+  placingIndex=NUM_SHIPS;
+  setStatus('✅ 随机布局完成！可微调（清空后手动放）或点击「确认布局，开战」。');
+  renderAll();
+});
+document.getElementById("btnClear").addEventListener("click",()=>{
+  ensureAudio(); sfx.clear();
+  playerGrid=emptyGrid(); playerShips=[]; placingIndex=0; rotation=0;
+  setStatus('已清空，请重新放置 '+NUM_SHIPS+' 艘战舰。');
+  renderAll();
+});
+document.getElementById("btnConfirm").addEventListener("click",()=>{
+  ensureAudio();
+  if(placingIndex<NUM_SHIPS){
+    setStatus('⚠️ 还有 '+(NUM_SHIPS-placingIndex)+' 艘战舰未放置，请先放好。');
+    return;
+  }
+  startBattle();
+});
+document.getElementById("btnRestart").addEventListener("click",()=>{ ensureAudio(); init(); });
+document.addEventListener("keydown",(e)=>{
+  if(phase==="setup" && (e.key==="r"||e.key==="R")){
+    ensureAudio(); sfx.rotate();
+    rotation=(rotation+1)%4; renderAll();
+  }
+});
+// 音效开关
+document.getElementById("btnSound").addEventListener("click",()=>{
+  soundOn=!soundOn;
+  ensureAudio();
+  document.getElementById("btnSound").textContent = soundOn ? "🔊" : "🔇";
+  if(soundOn) sfx.rotate();
+});
+
+function startBattle(){
+  phase="battle";
+  sfx.start();
+  computerPlaceShips();
+  document.getElementById("setupControls").style.display="none";
+  document.getElementById("battleControls").style.display="flex";
+  document.getElementById("enemyCard").style.display="";
+  document.getElementById("leftTitle").textContent="我方战场（电脑攻击中）";
+  document.getElementById("rightTitle").textContent="敌方战场（点击轰炸）";
+  document.getElementById("hint").textContent="战斗提示：点击右侧敌方棋盘投弹。灰色=未击中，绿色=击中，红色=击沉。击沉全部敌舰即胜！";
+  renderAll();
+}
+
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,99 @@
+{
+  "name": "battleship-vscode",
+  "displayName": "BattleShip",
+  "description": "VS Code 里的海战棋（Battleship）对战小游戏：10×10 双棋盘，手动或随机布置 5 艘战舰，与电脑 AI 轮流投弹，先击沉对方全部战舰者获胜。",
+  "version": "0.1.0",
+  "publisher": "zhanwangfeng",
+  "license": "MIT",
+  "icon": "resources/icon.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "battle",
+    "ship",
+    "game",
+    "海战",
+    "棋",
+    "对战",
+    "游戏"
+  ],
+  "files": [
+    "out",
+    "resources",
+    "src/webview",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "activationEvents": [
+    "onView:battleShip.menu",
+    "onCommand:battleShip.open"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "battleShip",
+          "title": "BattleShip",
+          "icon": "resources/icon.png"
+        }
+      ]
+    },
+    "views": {
+      "battleShip": [
+        {
+          "id": "battleShip.menu",
+          "name": "对局",
+          "icon": "resources/icon.png",
+          "contextualTitle": "BattleShip"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "battleShip.open",
+        "title": "BattleShip: 打开游戏"
+      },
+      {
+        "command": "battleShip.restart",
+        "title": "BattleShip: 重开一局"
+      },
+      {
+        "command": "battleShip.openWebsite",
+        "title": "BattleShip: 在网页打开同款游戏",
+        "icon": "$(link-external)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "battleShip.openWebsite",
+          "when": "view == battleShip.menu",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc --noEmit -p ./ && esbuild src/extension.ts --bundle --platform=node --target=node16 --outfile=out/extension.js --external:vscode",
+    "watch": "tsc --noEmit -p ./ & esbuild src/extension.ts --bundle --platform=node --target=node16 --outfile=out/extension.js --external:vscode --watch",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.23.1",
+    "typescript": "^5.3.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zhanwangfeng/BattleShipForVSCode.git"
+  }
+}
