@@ -2,7 +2,7 @@
   "name": "battleship-vscode",
   "displayName": "BattleShip",
   "description": "VS Code 里的海战棋（Battleship）对战小游戏：10×10 双棋盘，手动或随机布置 5 艘战舰，与电脑 AI 轮流投弹，先击沉对方全部战舰者获胜。",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "zhanwangfeng",
   "license": "MIT",
   "icon": "resources/icon.png",
@@ -34,6 +34,9 @@
     "onCommand:battleShip.open"
   ],
   "main": "./out/extension.js",
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
   "contributes": {
     "viewsContainers": {
       "activitybar": [
@@ -64,6 +67,22 @@
         "title": "BattleShip: 重开一局"
       },
       {
+        "command": "battleShip.multiCreate",
+        "title": "BattleShip: 创建联机房间"
+      },
+      {
+        "command": "battleShip.multiJoin",
+        "title": "BattleShip: 加入联机房间"
+      },
+      {
+        "command": "battleShip.setNickname",
+        "title": "BattleShip: 设定昵称"
+      },
+      {
+        "command": "battleShip.toggleSound",
+        "title": "BattleShip: 音效开关"
+      },
+      {
         "command": "battleShip.openWebsite",
         "title": "BattleShip: 在网页打开同款游戏",
         "icon": "$(link-external)"
@@ -88,6 +107,7 @@
   "devDependencies": {
     "@types/node": "^26.2.0",
     "@types/vscode": "^1.85.0",
+    "@types/ws": "^8.5.12",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.23.1",
     "typescript": "^5.3.3"

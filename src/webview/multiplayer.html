@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>海战棋 你 vs 机器人</title>
+<title>海战棋 · 联机对战</title>
 <style>
   :root{
     --bg:#0f172a; --panel:#1e293b; --line:#334155; --text:#e2e8f0;
@@ -133,7 +133,20 @@
 
 <script>
 "use strict";
+
+// ---- 联机模式（对接 common/LanMultiplayer，由模块注入 BOOT） ----
 const vscode = acquireVsCodeApi();
+const BOOT = __MULTI_BOOTSTRAP_VALUE__;   // { role, host, port, localIp, nick }
+const ROLE = BOOT.role;                    // 'host' | 'client'
+const ONLINE = true;
+let myNick = BOOT.nick || (ROLE === "host" ? "房主" : "挑战者");
+let opponentNick = "对手";
+let opponentConnected = false;
+let iAmReady = false;
+let opponentReady = false;
+let myTurn = false;
+let disconnected = false;
+
 const SIZE = 10;
 const SHIP_LENGTHS = [5,4,3,3,2];   // 经典舰队：航母/战列舰/巡洋舰/潜艇/驱逐舰
 const NUM_SHIPS = SHIP_LENGTHS.length;
@@ -173,7 +186,7 @@ let lastAIShot = null;
 
 // ---- 音效（Web Audio，无需外部文件） ----
 let audioCtx = null;
-let soundOn = __GAME_SOUND_ON__;
+let soundOn = (typeof BOOT!=="undefined" && typeof BOOT.soundOn==="boolean") ? BOOT.soundOn : true;
 function ensureAudio(){
   if(!audioCtx){
     try{ audioCtx = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ audioCtx=null; }
@@ -261,12 +274,13 @@ function init(){
   enemyGrid=emptyGrid(); enemyShotByPlayer=emptyStrGrid();
   aiTargets=[];
   lastPlayerShot=null; lastAIShot=null;
+  opponentConnected=false; iAmReady=false; opponentReady=false; myTurn=false; disconnected=false;
   document.getElementById("setupControls").style.display="flex";
   document.getElementById("battleControls").style.display="none";
   document.getElementById("enemyCard").style.display="none";
   document.getElementById("leftTitle").textContent="我方战场";
   document.getElementById("rightTitle").textContent="敌方战场（未知）";
-  setStatus('阶段：布局 — 把 5 艘战舰放到左侧战场（已放 '+playerShips.length+'/'+NUM_SHIPS+'）');
+  setStatus('⚓ 联机布局 — 把 5 艘战舰放到左侧战场（已放 '+playerShips.length+'/'+NUM_SHIPS+'）。等待对手加入后确认开战。');
   document.getElementById("hint").textContent="布局提示：点击格子放置当前战舰的「首格」，方向可旋转，战舰不可相邻或重叠。";
   buildBoards();
   renderAll();
@@ -370,19 +384,14 @@ function onPlayerCellClick(r,c){
 
 function onEnemyCellClick(r,c){
   if(phase!=="battle") return;
+  if(disconnected){ setStatus("⚠️ 对手已断开，本局结束。"); return; }
+  if(!myTurn){ setStatus("⏳ 等待对手行动，请稍候…"); return; }
   if(enemyShotByPlayer[r][c]!=="none") return;
   ensureAudio();
-  resolvePlayerShot(r,c);
-  const res=enemyShotByPlayer[r][c];
-  if(res==="miss") sfx.miss(); else if(res==="body") sfx.body(); else if(res==="sunk") sfx.head();
-  lastPlayerShot={r,c};
-  renderAll();
-  if(checkWin()) return;
-  setTimeout(()=>{
-    computerMove();
-    renderAll();
-    checkWin();
-  },350);
+  myTurn=false;
+  updateTurnUI();
+  sendNet({type:"shot", r, c, nick:myNick});
+  setStatus("🎯 已投弹，等待对手回传结果…");
 }
 
 // 解析玩家射击；若整艘敌舰被击中则全部标记为「击沉」
@@ -475,7 +484,7 @@ function computerMove(){
 
 // ---- 胜负 ----
 function checkWin(){
-  const enemyAllSunk=enemyShips.length>0 && enemyShips.every(s=>s.sunk);
+  const enemyAllSunk=enemyShips.length===NUM_SHIPS && enemyShips.every(s=>s.sunk);
   const myAllSunk=playerShips.length>0 && playerShips.every(s=>s.sunk);
   if(enemyAllSunk){
     phase="over";
@@ -542,12 +551,7 @@ function renderAll(){
     if(lastPlayerShot && lastPlayerShot.r===r && lastPlayerShot.c===c && s!=="none") el.classList.add("last-shot");
   }
   // 更新信息
-  if(phase==="battle"||phase==="over"){
-    const eLeft=enemyShips.filter(s=>!s.sunk).length;
-    const mLeft=playerShips.filter(s=>!s.sunk).length;
-    if(phase!=="over")
-      setStatus(`战斗阶段 — 剩余敌舰：<b>${eLeft}</b> · 我方剩余：<b>${mLeft}</b> · 点击右侧棋盘投弹`);
-  }
+  if(phase==="battle"){ updateTurnUI(); }
   // 布局阶段：根据当前悬停格重绘放置预览
   paintGhost(hoverR,hoverC);
 }
@@ -590,9 +594,20 @@ document.getElementById("btnConfirm").addEventListener("click",()=>{
     setStatus('⚠️ 还有 '+(NUM_SHIPS-placingIndex)+' 艘战舰未放置，请先放好。');
     return;
   }
-  startBattle();
+  if(!opponentConnected){
+    setStatus('⏳ 对手尚未加入房间，请等待对手加入后再确认布局。');
+    return;
+  }
+  iAmReady=true;
+  sendNet({type:"ready", nick:myNick});
+  if(opponentReady) beginBattle();
+  else setStatus('✅ 你的布局已确认，等待对手完成布局后开战…');
 });
-document.getElementById("btnRestart").addEventListener("click",()=>{ ensureAudio(); init(); });
+document.getElementById("btnRestart").addEventListener("click",()=>{
+  ensureAudio();
+  sendNet({type:"restart"});
+  init();
+});
 document.addEventListener("keydown",(e)=>{
   if(phase==="setup" && (e.key==="r"||e.key==="R")){
     ensureAudio(); sfx.rotate();
@@ -600,17 +615,10 @@ document.addEventListener("keydown",(e)=>{
   }
 });
 // 音效开关：点击后交给扩展统一处理，保证与 TreeView 状态一致
-document.getElementById("btnSound").addEventListener("click",()=>{
-  ensureAudio(); vscode.postMessage({type:"toggleSound"});
-});
+document.getElementById("btnSound").addEventListener("click",()=>{ ensureAudio(); sendNet({type:"toggleSound"}); });
 function updateSoundBtn(){
   document.getElementById("btnSound").textContent = soundOn ? "🔊" : "🔇";
 }
-// 监听扩展下发的音效状态（TreeView 开关 / 联机面板联动）
-window.addEventListener("message",(e)=>{
-  const msg = e.data;
-  if(msg && msg.type==="setSound"){ soundOn = !!msg.on; updateSoundBtn(); }
-});
 
 function startBattle(){
   phase="battle";
@@ -624,6 +632,164 @@ function startBattle(){
   document.getElementById("hint").textContent="战斗提示：点击右侧敌方棋盘投弹。灰色=未击中，绿色=击中，红色=击沉。击沉全部敌舰即胜！";
   renderAll();
 }
+
+// ---- 联机网络逻辑（对接 common/LanMultiplayer） ----
+function sendNet(msg){
+  // host 回传命中结果时需指定接收方（peerId）
+  if(ROLE==="host" && msg.type==="shotResult" && typeof msg.from==="string"){
+    msg.to = msg.from;
+  }
+  vscode.postMessage(msg);
+}
+
+function netStatus(t){ setStatus(t); }
+
+function updateTurnUI(){
+  if(phase!=="battle") return;
+  const eLeft = enemyShips.length;                       // 已击沉敌舰数
+  const mLeft = playerShips.filter(s=>!s.sunk).length;   // 我方剩余战舰数
+  const turn = myTurn ? "🟢 轮到你投弹" : "⚪ 等待对手投弹";
+  setStatus(`${turn} — 已击沉敌舰：<b>${eLeft}</b>/${NUM_SHIPS} · 我方剩余：<b>${mLeft}</b>`);
+}
+
+function maybeBegin(){
+  if(phase==="setup" && iAmReady && opponentReady){
+    beginBattle();
+  }
+}
+
+function beginBattle(){
+  phase="battle";
+  sfx.start();
+  document.getElementById("setupControls").style.display="none";
+  document.getElementById("battleControls").style.display="flex";
+  document.getElementById("enemyCard").style.display="";
+  document.getElementById("leftTitle").textContent="我方战场（"+myNick+"）";
+  document.getElementById("rightTitle").textContent="敌方战场（"+opponentNick+"）";
+  document.getElementById("hint").textContent="战斗提示：点击右侧敌方棋盘投弹。房主先手，双方轮流。击沉全部敌舰即获胜！";
+  myTurn = (ROLE==="host");
+  sendNet({type:"hello", nick:myNick});
+  renderAll();
+  updateTurnUI();
+  setStatus(myTurn ? "🚀 战斗开始！轮到你投弹。" : "🚀 战斗开始！等待对手先手投弹…");
+}
+
+// 对手向我方棋盘开炮
+function handleIncomingShot(msg){
+  if(phase!=="battle" || disconnected) return;
+  const r=msg.r, c=msg.c;
+  const g=playerGrid[r][c];
+  let result, sunkCells=null;
+  if(g===null){
+    result="miss"; playerShotByAI[r][c]="miss";
+  }else{
+    playerShotByAI[r][c]="body";
+    const ship=playerShips[g];
+    if(ship.cells.every(([rr,cc])=> playerShotByAI[rr][cc]==="body" || playerShotByAI[rr][cc]==="sunk")){
+      ship.cells.forEach(([rr,cc])=> playerShotByAI[rr][cc]="sunk");
+      ship.sunk=true;
+      result="sunk";
+      sunkCells=ship.cells.map(([rr,cc])=>[rr,cc]);
+    }else{
+      result="body";
+    }
+  }
+  if(result==="miss") sfx.miss(); else if(result==="body") sfx.body(); else sfx.head();
+  lastAIShot={r,c};
+  const out={type:"shotResult", r, c, result};
+  if(result==="sunk") out.sunkCells=sunkCells;
+  if(typeof msg.from==="string") out.from=msg.from;
+  sendNet(out);
+  renderAll();
+  myTurn=true;            // 防守后轮到我进攻
+  updateTurnUI();
+  checkWin();
+}
+
+// 我的炮弹命中结果回传
+function handleShotResult(msg){
+  if(phase!=="battle" || disconnected) return;
+  const r=msg.r, c=msg.c;
+  const res=msg.result;
+  enemyShotByPlayer[r][c]=res;
+  if(res==="sunk" && Array.isArray(msg.sunkCells)){
+    enemyShips.push({cells: msg.sunkCells.map(([rr,cc])=>[rr,cc]), sunk:true});
+  }
+  if(res==="miss") sfx.miss(); else if(res==="body") sfx.body(); else sfx.head();
+  lastPlayerShot={r,c};
+  renderAll();
+  updateTurnUI();       // 我的炮弹已结算，等待对手行动（myTurn 保持 false）
+  checkWin();
+}
+
+window.addEventListener("message",(e)=>{
+  const msg=e.data;
+  if(!msg || !msg.type) return;
+  switch(msg.type){
+    case "hostReady":
+      netStatus('🏠 房间已就绪：<b>'+(msg.host||BOOT.localIp)+':'+msg.port+'</b>，把地址告诉好友即可加入。');
+      break;
+    case "hostError":
+      netStatus('❌ 创建房间失败：'+(msg.error||"未知错误")+'（可能端口被占用）');
+      break;
+    case "peerConnected":
+      opponentConnected=true;
+      netStatus('✅ 对手已加入房间！请布置舰队后点击「确认布局，开战」。');
+      break;
+    case "peerDisconnected":
+      opponentConnected=false; disconnected=true; myTurn=false;
+      netStatus('⚠️ 对手已断开连接，本局结束。');
+      break;
+    case "clientConnected":
+      opponentConnected=true;
+      netStatus('✅ 已连接房主！请布置你的舰队后点击「确认布局，开战」。');
+      break;
+    case "clientDisconnected":
+      opponentConnected=false; disconnected=true; myTurn=false;
+      netStatus('⚠️ 与房主的连接已断开，本局结束。');
+      break;
+    case "clientTimeout":
+      netStatus('⌛ 连接房主超时，请确认地址后重试。');
+      break;
+    case "clientRefused":
+      netStatus('🚫 加入房间被拒绝：'+(msg.error||"房间已满或地址无效")+'。');
+      break;
+    case "clientError":
+      netStatus('❌ 连接出错：'+(msg.error||"未知错误")+'。');
+      break;
+    case "ready":
+      opponentReady=true;
+      if(iAmReady) maybeBegin();
+      break;
+    case "hello":
+      opponentNick = msg.nick || "对手";
+      document.getElementById("rightTitle").textContent="敌方战场（"+opponentNick+"）";
+      updateTurnUI();
+      break;
+    case "shot":
+      handleIncomingShot(msg);
+      break;
+    case "shotResult":
+      handleShotResult(msg);
+      break;
+    case "restart":
+      init();
+      break;
+    case "setNickname":
+      myNick = msg.nick || myNick;
+      document.getElementById("leftTitle").textContent="我方战场（"+myNick+"）";
+      sendNet({type:"peerNickname", nick: myNick});   // 立即同步给对手
+      break;
+    case "setSound":
+      soundOn = !!msg.on; updateSoundBtn();
+      break;
+    case "peerNickname":
+      opponentNick = msg.nick || opponentNick;
+      document.getElementById("rightTitle").textContent="敌方战场（"+opponentNick+"）";
+      updateTurnUI();
+      break;
+  }
+});
 
 init();
 </script>
